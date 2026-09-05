@@ -18,3 +18,11 @@
 - openwebui
 - searxng
 - caddy
+
+# System Maintenance
+
+```
+sudo apt update
+sudo apt full-upgrade
+sudo reboot
+```
