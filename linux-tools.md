@@ -2,10 +2,12 @@
 # cli
 
 - `ff`
-- `navi`
+- `navi` https://github.com/denisidoro/navi/tree/master
 - `pet`
 - `fzf`
-
+- `wtf` https://github.com/wtfutil/wtf
+- `atuin` https://github.com/atuinsh/atuin
+- 
 # tools
 
 - perfwatch
