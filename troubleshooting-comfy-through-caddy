@@ -1,0 +1,186 @@
+# ComfyUI Behind Caddy: Troubleshooting a 500 Error
+
+This guide covers a situation where ComfyUI is running directly from Python and is exposed over HTTPS using Caddy. The ComfyUI page appeared to load through Caddy but then showed an error.
+
+## Setup
+
+- ComfyUI runs locally using Python.
+- ComfyUI listens on `127.0.0.1:8188`.
+- Caddy runs on the same Linux machine.
+- Caddy provides local HTTPS at `https://comfyui.home`.
+
+## Recommended Caddy configuration
+
+Add this entry to `/etc/caddy/Caddyfile`:
+
+```caddyfile
+comfyui.home {
+    tls internal
+    reverse_proxy 127.0.0.1:8188
+}
+```
+
+The upstream connection is HTTP, not HTTPS. Caddy handles HTTPS between the browser and Caddy.
+
+Do not use:
+
+```caddyfile
+reverse_proxy https://127.0.0.1:8188
+```
+
+Caddy supports WebSocket proxying automatically, so no additional WebSocket headers are normally required.
+
+## Start ComfyUI
+
+Activate the environment used for ComfyUI and start it explicitly on the local interface:
+
+```bash
+cd /path/to/ComfyUI
+source venv/bin/activate
+python main.py --listen 127.0.0.1 --port 8188
+```
+
+If Conda is used instead of `venv`, activate the appropriate Conda environment first.
+
+## Validate and reload Caddy
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+The configuration should report:
+
+```text
+Valid configuration
+```
+
+## Test ComfyUI directly
+
+Test ComfyUI without going through Caddy:
+
+```bash
+curl -I http://127.0.0.1:8188/
+```
+
+A working installation should return a response similar to:
+
+```text
+HTTP/1.1 200 OK
+Server: Python/... aiohttp/...
+```
+
+If this request fails, the problem is with ComfyUI or the Python process rather than Caddy.
+
+## Test through Caddy
+
+```bash
+curl -vkI https://comfyui.home/
+```
+
+A successful proxy request should return:
+
+```text
+HTTP/2 200
+server: Caddy
+server: Python/... aiohttp/...
+```
+
+This confirms that Caddy can reach ComfyUI and return its frontend over HTTPS.
+
+## The actual cause in this case
+
+Caddy's earlier logs contained requests for:
+
+```text
+/auth?redirect=%2F
+/ws/socket.io/
+```
+
+These are associated with Open WebUI, not ComfyUI. The browser had retained old Open WebUI data or a service worker for the `comfyui.home` origin. Consequently, the browser continued requesting Open WebUI routes even though Caddy was now correctly serving ComfyUI.
+
+The successful direct and proxied `curl` tests proved that both ComfyUI and Caddy were working.
+
+## Fix cached browser data
+
+In Chrome:
+
+1. Open `https://comfyui.home`.
+2. Open **Developer Tools**.
+3. Select **Application**.
+4. Open **Storage** and click **Clear site data**.
+5. Open **Service Workers** and click **Unregister** if a worker is listed.
+6. Close the tab and reopen `https://comfyui.home`.
+
+Testing the address in an Incognito window is a quick way to confirm that stored browser data is the cause.
+
+## Useful diagnostic commands
+
+### View recent Caddy logs
+
+```bash
+sudo journalctl -u caddy -n 100 --no-pager
+```
+
+### Check whether ComfyUI is listening
+
+```bash
+ss -ltnp | grep 8188
+```
+
+### Confirm that the proxy returns the expected frontend
+
+```bash
+curl -sk https://comfyui.home/ | grep -i -m1 '<title'
+```
+
+### Compare direct and proxied responses
+
+```bash
+curl -i http://127.0.0.1:8188/
+curl -ik https://comfyui.home/
+```
+
+## Interpreting common messages
+
+### `connect: connection refused`
+
+```text
+dial tcp 127.0.0.1:8188: connect: connection refused
+```
+
+Caddy cannot reach ComfyUI. Usually ComfyUI is stopped, is still starting, or is listening on a different address or port.
+
+### `HTTP 200` from both tests
+
+If both the direct request and the Caddy request return `200`, the server-side configuration is working. Clear browser storage and check the browser's Network and Console panels for stale frontend requests.
+
+### Caddyfile formatting warning
+
+```text
+Caddyfile input is not formatted
+```
+
+This does not prevent Caddy from working. The file can be formatted with:
+
+```bash
+sudo caddy fmt --overwrite /etc/caddy/Caddyfile
+```
+
+Validate and reload Caddy afterwards.
+
+### Local certificate or OCSP warnings
+
+Warnings about installing Caddy's local root certificate or the absence of an OCSP server do not explain an application-level 500 error. Client devices still need to trust Caddy's local root certificate to avoid browser certificate warnings.
+
+## Final working arrangement
+
+```text
+Browser
+  -> HTTPS: https://comfyui.home
+  -> Caddy
+  -> HTTP: http://127.0.0.1:8188
+  -> ComfyUI Python process
+```
+
+The resolution was to clear the stale Open WebUI site data and service worker stored by Chrome. No special Caddy WebSocket configuration was required.
