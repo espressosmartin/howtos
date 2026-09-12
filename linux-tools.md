@@ -26,3 +26,6 @@ sudo apt update
 sudo apt full-upgrade
 sudo reboot
 ```
+# useful commands
+
+`hash -r` clear bash cache
