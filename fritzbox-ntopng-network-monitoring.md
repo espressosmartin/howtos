@@ -218,6 +218,77 @@ The test succeeds when ntopng shows several individual `192.168.178.x` clients c
 
 Remember that a hostname such as `openwebui.local` describes the whole Linux host at that IP address; it does not prove that every flow came from Open WebUI.
 
+## Understanding the IP addresses shown by ntopng
+
+ntopng lists both ends of each observed connection. Consequently, **Live Hosts** and **Top Hosts (Local and Remote)** normally contain a mixture of home devices and internet services.
+
+| Address or label | What it normally means |
+| --- | --- |
+| `192.168.178.x` | A device on the home IPv4 network. Examples include a phone, laptop, Deco unit or `fractal`. |
+| `2a02:...` or another public IPv6 address | This may be the public IPv6 address of a home device, or a remote internet system. IPv6 clients do not normally hide behind IPv4-style NAT. |
+| `217.x.x.x` or another public IPv4 address | Usually a remote website, cloud service, content-delivery server or other internet endpoint contacted by a home device. |
+| `224.0.0.251` | The IPv4 multicast address used by mDNS/Bonjour for local service discovery. It is not an internet host. |
+| `ff02::fb` | The IPv6 multicast equivalent used by mDNS. It is not an internet host. |
+| `L` | ntopng has classified the address as local. |
+| `R` | ntopng has classified the address as remote. This classification can be wrong if its local networks have not been configured. |
+
+Seeing an external address in **Live Hosts** does **not** mean that an unknown device has joined the home network. It usually means ntopng has observed one of the home devices communicating with that address. Open the host or its flow details to see the local peer, application, direction and byte counts.
+
+### Tell ntopng which IPv4 addresses are local
+
+Because this setup feeds packets to ntopng through standard input (`-i -`), the capture interface has no IP address or subnet mask from which ntopng can infer the home network. This can make even addresses such as `192.168.178.36` and `192.168.178.29` appear with a grey `R` badge.
+
+Remove any existing local-network setting and add the FRITZ!Box IPv4 subnet:
+
+```bash
+sudo sed -i -E \
+  '/^[[:space:]]*(-m|--local-networks)(=|[[:space:]])/d' \
+  /etc/ntopng/ntopng-fritz.conf
+
+echo '-m=192.168.178.0/24' | \
+  sudo tee -a /etc/ntopng/ntopng-fritz.conf >/dev/null
+```
+
+Stop the foreground capture with `Ctrl+C`, then start `fritzdump.sh` again. Addresses in `192.168.178.0/24` should subsequently appear as local (`L`). This setting changes ntopng's classification only; it does not change DHCP, routing or any client IP address.
+
+Confirm the saved setting with:
+
+```bash
+grep -nE '^[[:space:]]*(-m|--local-networks)' \
+  /etc/ntopng/ntopng-fritz.conf
+```
+
+### IPv6 needs separate consideration
+
+A home device can have all of the following at once:
+
+- a private IPv4 address such as `192.168.178.29`;
+- a link-local IPv6 address beginning `fe80:`;
+- a globally routable IPv6 address beginning with the prefix delegated by the ISP.
+
+Therefore, the same physical device may appear as two or more ntopng hosts. A public-looking IPv6 address is not automatically an intruder; it may be one of the home clients. Device names, MAC addresses where available, simultaneous traffic and the flow peer can help correlate the entries.
+
+An IPv6 home prefix can also be added to the same `-m` value, for example:
+
+```text
+-m=192.168.178.0/24,2a02:8012:9fb8:0::/64
+```
+
+Only do this after confirming the current delegated prefix in the FRITZ!Box. Many ISPs can change it, so an old hard-coded prefix could later classify unrelated addresses incorrectly. Keeping only the stable IPv4 subnet is acceptable while testing.
+
+### Why Active Monitoring and Active Scan are empty
+
+- **Active Monitoring** contains reachability or latency checks that have been configured explicitly; it does not populate itself from captured traffic.
+- **Active Scan** tries to probe a real network interface. In this setup ntopng reads a passive PCAP stream from standard input, so it has no suitable interface through which to scan the LAN.
+
+These empty pages do not indicate that capture has failed. For this setup, the useful views are **Hosts**, **Live Flows**, **Applications**, **Talkers**, **Traffic** and **Alerts**. For a separate one-off device discovery scan from `fractal`, use:
+
+```bash
+sudo nmap -sn 192.168.178.0/24
+```
+
+This discovery scan tells you which IPv4 devices respond; it does not provide historical bandwidth usage.
+
 ## Troubleshooting
 
 ### Too many redirects
